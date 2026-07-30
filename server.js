@@ -10,8 +10,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded images
-app.use('/uploads', express.static('uploads'));
+// Serve record files (images stored in /data/{id}/ folders)
+app.use('/data', express.static('data'));
 
 // Routes
 app.use('/api/records', recordRoutes);

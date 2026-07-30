@@ -6,25 +6,8 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads');
-    
-    // Create uploads directory if it doesn't exist
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const nameWithoutExt = path.basename(file.originalname, ext);
-    cb(null, `${nameWithoutExt}-${uniqueSuffix}${ext}`);
-  }
-});
+// Use memory storage - we'll save the file manually to the record folder
+const storage = multer.memoryStorage();
 
 // File filter to accept only images
 const fileFilter = (req, file, cb) => {
@@ -39,7 +22,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configure multer
+// Configure multer with memory storage
 export const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
@@ -48,17 +31,38 @@ export const upload = multer({
   }
 });
 
-// Delete a file
-export const deleteFile = (filename) => {
-  try {
-    const filePath = path.join(__dirname, '../uploads', filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('Error deleting file:', error);
-    return false;
+// Save an image buffer to a record's folder
+export const saveImageToFolder = (recordId, fileBuffer, originalName) => {
+  const dataDir = path.join(__dirname, '../data');
+  const folderPath = path.join(dataDir, recordId);
+  
+  // Ensure folder exists
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
   }
+  
+  const ext = path.extname(originalName).toLowerCase();
+  const imageFileName = `${recordId}${ext}`;
+  const imagePath = path.join(folderPath, imageFileName);
+  
+  fs.writeFileSync(imagePath, fileBuffer);
+  
+  return imageFileName;
+};
+
+// Delete old image(s) from a record folder (before saving a new one)
+export const deleteOldImage = (recordId) => {
+  const dataDir = path.join(__dirname, '../data');
+  const folderPath = path.join(dataDir, recordId);
+  
+  if (!fs.existsSync(folderPath)) return;
+  
+  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+  const files = fs.readdirSync(folderPath);
+  
+  files.forEach(file => {
+    if (imageExts.includes(path.extname(file).toLowerCase())) {
+      fs.unlinkSync(path.join(folderPath, file));
+    }
+  });
 };

@@ -4,11 +4,15 @@ import {
   getAllRecords,
   getRecordById,
   updateRecord,
-  deleteRecord
+  deleteRecord,
+  deleteMultipleRecords
 } from '../controllers/recordController.js';
 import { upload } from '../utils/fileUpload.js';
 
 const router = express.Router();
+
+// Delete multiple records (must be before POST '/' to avoid route conflict)
+router.post('/delete-multiple', deleteMultipleRecords);
 
 // Create a new record with image
 router.post('/', upload.single('image'), createRecord);
