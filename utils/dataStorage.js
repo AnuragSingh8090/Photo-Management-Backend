@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
+import { getMediaDataPath } from './pathHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dataDir = path.join(__dirname, '../data');
+const dataDir = getMediaDataPath();
 
 // Media file extensions
 const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];

@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import os from 'os';
+import path from 'path';
+import { getMediaDataPath } from './utils/pathHelper.js';
 import recordRoutes from './routes/recordRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { verifyToken } from './middleware/authMiddleware.js';
@@ -38,11 +41,16 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Health Check Route
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // Protected API Auth Routes (for frontend login/verify)
 app.use('/api/auth', authRoutes);
 // (Middlewares moved up)
 // Serve record files (images stored in /data/{id}/ folders)
-app.use('/data', express.static('data'));
+app.use('/data', express.static(getMediaDataPath()));
 
 // Auth Routes
 app.use('/api/auth', authRoutes);

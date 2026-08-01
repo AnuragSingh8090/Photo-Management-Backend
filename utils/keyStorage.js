@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const keysFile = path.join(__dirname, '../data/keys.json');
+const keysFile = path.join(__dirname, '../secrets/keys.json');
 
 export const getKeys = () => {
   if (!fs.existsSync(keysFile)) {

@@ -2,6 +2,8 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import os from 'os';
+import { getMediaDataPath } from './pathHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,7 +40,7 @@ export const upload = multer({
 
 // Save a media file buffer to a record's folder
 export const saveMediaToFolder = (recordId, fileBuffer, originalName) => {
-  const dataDir = path.join(__dirname, '../data');
+  const dataDir = getMediaDataPath();
   const folderPath = path.join(dataDir, recordId);
   
   // Ensure folder exists
@@ -57,7 +59,7 @@ export const saveMediaToFolder = (recordId, fileBuffer, originalName) => {
 
 // Delete old media files from a record folder
 export const deleteOldMedia = (recordId) => {
-  const dataDir = path.join(__dirname, '../data');
+  const dataDir = getMediaDataPath();
   const folderPath = path.join(dataDir, recordId);
   
   if (!fs.existsSync(folderPath)) return;
