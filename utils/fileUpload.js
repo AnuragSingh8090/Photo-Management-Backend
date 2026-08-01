@@ -9,30 +9,35 @@ const __dirname = path.dirname(__filename);
 // Use memory storage - we'll save the file manually to the record folder
 const storage = multer.memoryStorage();
 
-// File filter to accept only images
+// File filter to accept images AND videos
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif|webp/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
+  const allowedImageTypes = /jpeg|jpg|png|gif|webp/;
+  const allowedVideoTypes = /mp4|webm|mov|avi|quicktime|x-msvideo/;
   
-  if (extname && mimetype) {
+  const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+  const mimetype = file.mimetype.toLowerCase();
+  
+  const isImage = allowedImageTypes.test(ext) || allowedImageTypes.test(mimetype);
+  const isVideo = allowedVideoTypes.test(ext) || mimetype.startsWith('video/');
+  
+  if (isImage || isVideo) {
     cb(null, true);
   } else {
-    cb(new Error('Only image files are allowed (jpeg, jpg, png, gif, webp)'));
+    cb(new Error('Only image files (jpeg, jpg, png, gif, webp) and video files (mp4, webm, mov, avi) are allowed'));
   }
 };
 
-// Configure multer with memory storage
+// Configure multer for multiple files (up to 20)
 export const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: 100 * 1024 * 1024 // 100MB limit (for videos)
   }
 });
 
-// Save an image buffer to a record's folder
-export const saveImageToFolder = (recordId, fileBuffer, originalName) => {
+// Save a media file buffer to a record's folder
+export const saveMediaToFolder = (recordId, fileBuffer, originalName) => {
   const dataDir = path.join(__dirname, '../data');
   const folderPath = path.join(dataDir, recordId);
   
@@ -42,26 +47,26 @@ export const saveImageToFolder = (recordId, fileBuffer, originalName) => {
   }
   
   const ext = path.extname(originalName).toLowerCase();
-  const imageFileName = `${recordId}${ext}`;
-  const imagePath = path.join(folderPath, imageFileName);
+  const mediaFileName = `${recordId}${ext}`;
+  const mediaPath = path.join(folderPath, mediaFileName);
   
-  fs.writeFileSync(imagePath, fileBuffer);
+  fs.writeFileSync(mediaPath, fileBuffer);
   
-  return imageFileName;
+  return mediaFileName;
 };
 
-// Delete old image(s) from a record folder (before saving a new one)
-export const deleteOldImage = (recordId) => {
+// Delete old media files from a record folder
+export const deleteOldMedia = (recordId) => {
   const dataDir = path.join(__dirname, '../data');
   const folderPath = path.join(dataDir, recordId);
   
   if (!fs.existsSync(folderPath)) return;
   
-  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+  const mediaExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.webm', '.mov', '.avi'];
   const files = fs.readdirSync(folderPath);
   
   files.forEach(file => {
-    if (imageExts.includes(path.extname(file).toLowerCase())) {
+    if (mediaExts.includes(path.extname(file).toLowerCase())) {
       fs.unlinkSync(path.join(folderPath, file));
     }
   });

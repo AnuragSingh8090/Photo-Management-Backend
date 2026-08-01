@@ -7,6 +7,21 @@ const __dirname = path.dirname(__filename);
 
 const dataDir = path.join(__dirname, '../data');
 
+// Media file extensions
+const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+const videoExts = ['.mp4', '.webm', '.mov', '.avi'];
+const allMediaExts = [...imageExts, ...videoExts];
+
+/**
+ * Determine if a file is an image or video based on extension
+ */
+export const getMediaType = (fileName) => {
+  const ext = path.extname(fileName).toLowerCase();
+  if (imageExts.includes(ext)) return 'image';
+  if (videoExts.includes(ext)) return 'video';
+  return 'unknown';
+};
+
 // Ensure main data directory exists
 export const ensureDataDirectory = () => {
   if (!fs.existsSync(dataDir)) {
@@ -130,6 +145,19 @@ export const readAllRecords = () => {
           const record = JSON.parse(content);
           if (record) {
             record.folderName = folderName;
+            
+            // Migration: convert old single imageFile to mediaFiles array
+            if (record.imageFile && !record.mediaFiles) {
+              record.mediaFiles = [{
+                fileName: record.imageFile,
+                type: getMediaType(record.imageFile),
+                originalName: record.imageFile
+              }];
+            }
+            if (!record.mediaFiles) {
+              record.mediaFiles = [];
+            }
+            
             records.push(record);
           }
         } catch (e) {
@@ -144,7 +172,22 @@ export const readAllRecords = () => {
 // Read single record by ID
 export const readRecordJson = (id) => {
   const result = findRecordFolderById(id);
-  return result ? result.record : null;
+  if (!result) return null;
+  
+  const record = result.record;
+  // Migration: convert old single imageFile to mediaFiles array
+  if (record.imageFile && !record.mediaFiles) {
+    record.mediaFiles = [{
+      fileName: record.imageFile,
+      type: getMediaType(record.imageFile),
+      originalName: record.imageFile
+    }];
+  }
+  if (!record.mediaFiles) {
+    record.mediaFiles = [];
+  }
+  
+  return record;
 };
 
 // Delete record folder completely
@@ -157,34 +200,44 @@ export const deleteRecordFolder = (id) => {
   return false;
 };
 
-// Save image file buffer to record folder
-export const saveImageToRecordFolder = (folderName, baseName, buffer, originalName) => {
+// Save a media file (image or video) to a record folder
+export const saveMediaToRecordFolder = (folderName, baseName, buffer, originalName, index) => {
   const folderPath = path.join(dataDir, folderName);
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
 
   const ext = path.extname(originalName).toLowerCase() || '.jpg';
-  const imageFileName = `${baseName}${ext}`;
-  const imagePath = path.join(folderPath, imageFileName);
+  const indexSuffix = index !== undefined ? `-${index}` : '';
+  const mediaFileName = `${baseName}${indexSuffix}${ext}`;
+  const mediaPath = path.join(folderPath, mediaFileName);
 
-  fs.writeFileSync(imagePath, buffer);
-  return imageFileName;
+  fs.writeFileSync(mediaPath, buffer);
+  return mediaFileName;
 };
 
-// Delete any image in record folder
-export const deleteImagesInFolder = (folderPath) => {
+// Delete all media files in a record folder
+export const deleteAllMediaInFolder = (folderPath) => {
   if (!fs.existsSync(folderPath)) return;
-  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
   const files = fs.readdirSync(folderPath);
 
   files.forEach(file => {
-    if (imageExts.includes(path.extname(file).toLowerCase())) {
+    if (allMediaExts.includes(path.extname(file).toLowerCase())) {
       try {
         fs.unlinkSync(path.join(folderPath, file));
       } catch (e) {
-        console.error('Error unlinking image file:', e);
+        console.error('Error unlinking media file:', e);
       }
     }
   });
+};
+
+// Delete a single media file from a record folder
+export const deleteMediaFileFromFolder = (folderPath, fileName) => {
+  const filePath = path.join(folderPath, fileName);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    return true;
+  }
+  return false;
 };

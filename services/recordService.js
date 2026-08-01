@@ -7,12 +7,13 @@ import {
   readAllRecords,
   deleteRecordFolder,
   findRecordFolderById,
-  saveImageToRecordFolder,
-  deleteImagesInFolder
+  saveMediaToRecordFolder,
+  deleteMediaFileFromFolder,
+  getMediaType
 } from '../utils/dataStorage.js';
 
-// Create a new record
-export const createRecord = (recordData, imageFileObj) => {
+// Create a new record with multiple media files
+export const createRecord = (recordData, mediaFileObjects) => {
   const id = uuidv4();
   const baseName = generateBaseName(recordData.title, recordData.dateTime, id);
   const folderName = baseName;
@@ -20,14 +21,24 @@ export const createRecord = (recordData, imageFileObj) => {
   // Create folder
   createRecordFolder(folderName);
 
-  let imageFileName = null;
-  if (imageFileObj && imageFileObj.buffer) {
-    imageFileName = saveImageToRecordFolder(
-      folderName,
-      baseName,
-      imageFileObj.buffer,
-      imageFileObj.originalname
-    );
+  const mediaFiles = [];
+  if (mediaFileObjects && Array.isArray(mediaFileObjects) && mediaFileObjects.length > 0) {
+    mediaFileObjects.forEach((fileObj, index) => {
+      if (fileObj && fileObj.buffer) {
+        const savedFileName = saveMediaToRecordFolder(
+          folderName,
+          baseName,
+          fileObj.buffer,
+          fileObj.originalname,
+          index
+        );
+        mediaFiles.push({
+          fileName: savedFileName,
+          type: getMediaType(savedFileName),
+          originalName: fileObj.originalname
+        });
+      }
+    });
   }
 
   const newRecord = {
@@ -36,7 +47,7 @@ export const createRecord = (recordData, imageFileObj) => {
     title: recordData.title,
     description: recordData.description || '',
     dateTime: recordData.dateTime,
-    imageFile: imageFileName,
+    mediaFiles,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -57,8 +68,8 @@ export const getRecordById = (id) => {
   return readRecordJson(id);
 };
 
-// Update a record
-export const updateRecord = (id, updateData, newImageFileObj) => {
+// Update a record (text fields only, no media changes)
+export const updateRecord = (id, updateData) => {
   const folderInfo = findRecordFolderById(id);
 
   if (!folderInfo) {
@@ -67,57 +78,113 @@ export const updateRecord = (id, updateData, newImageFileObj) => {
 
   const existingRecord = folderInfo.record;
   const currentFolderName = folderInfo.folderName;
+  const currentBaseName = folderInfo.jsonFile.replace('.json', '');
 
-  // Compute new baseName if title or dateTime changed
   const newTitle = updateData.title || existingRecord.title;
   const newDateTime = updateData.dateTime || existingRecord.dateTime;
-  const newBaseName = generateBaseName(newTitle, newDateTime, id);
-  const newFolderName = newBaseName;
 
-  // Build lastUpdate object
-  const changedFields = {};
-  if (updateData.title && updateData.title !== existingRecord.title) {
-    changedFields.title = { from: existingRecord.title, to: updateData.title };
-  }
-  if (updateData.dateTime && updateData.dateTime !== existingRecord.dateTime) {
-    changedFields.dateTime = { from: existingRecord.dateTime, to: updateData.dateTime };
-  }
-  if (newImageFileObj) {
-    changedFields.imageFile = { from: existingRecord.imageFile, to: newImageFileObj.originalname };
-  }
-
-  let finalImageFileName = existingRecord.imageFile;
-
-  if (newImageFileObj && newImageFileObj.buffer) {
-    // Delete existing images in current folder
-    deleteImagesInFolder(folderInfo.folderPath);
-
-    // Save new image
-    finalImageFileName = saveImageToRecordFolder(
-      currentFolderName,
-      newBaseName,
-      newImageFileObj.buffer,
-      newImageFileObj.originalname
-    );
+  // Preserve mediaFiles (with migration for old records)
+  let mediaFiles = existingRecord.mediaFiles || [];
+  if (!mediaFiles.length && existingRecord.imageFile) {
+    mediaFiles = [{
+      fileName: existingRecord.imageFile,
+      type: getMediaType(existingRecord.imageFile),
+      originalName: existingRecord.imageFile
+    }];
   }
 
   const updatedRecord = {
     ...existingRecord,
-    folderName: newFolderName,
+    // keep original folderName to avoid breaking media paths
     title: newTitle,
     description: updateData.description !== undefined ? updateData.description : existingRecord.description,
     dateTime: newDateTime,
-    imageFile: finalImageFileName,
-    updatedAt: new Date().toISOString(),
-    lastUpdate: {
-      timestamp: new Date().toISOString(),
-      changedFields
-    }
+    mediaFiles,
+    updatedAt: new Date().toISOString()
   };
 
-  // Re-save JSON with new baseName
-  saveRecordJson(currentFolderName, newBaseName, updatedRecord);
+  saveRecordJson(currentFolderName, currentBaseName, updatedRecord);
 
+  return updatedRecord;
+};
+
+// Add a single media file to an existing record
+export const addMediaToRecord = (id, fileObj) => {
+  const folderInfo = findRecordFolderById(id);
+  if (!folderInfo) return null;
+
+  const record = folderInfo.record;
+  const folderName = folderInfo.folderName;
+  const baseName = generateBaseName(record.title, record.dateTime, id);
+
+  // Migrate old format if needed
+  let mediaFiles = record.mediaFiles || [];
+  if (!mediaFiles.length && record.imageFile) {
+    mediaFiles = [{
+      fileName: record.imageFile,
+      type: getMediaType(record.imageFile),
+      originalName: record.imageFile
+    }];
+  }
+
+  // Save the new file with a unique index
+  const newIndex = Date.now();
+  const savedFileName = saveMediaToRecordFolder(
+    folderName,
+    baseName,
+    fileObj.buffer,
+    fileObj.originalname,
+    newIndex
+  );
+
+  mediaFiles.push({
+    fileName: savedFileName,
+    type: getMediaType(savedFileName),
+    originalName: fileObj.originalname
+  });
+
+  const updatedRecord = {
+    ...record,
+    mediaFiles,
+    updatedAt: new Date().toISOString()
+  };
+
+  saveRecordJson(folderName, baseName, updatedRecord);
+  return updatedRecord;
+};
+
+// Delete a single media file from a record
+export const deleteMediaFromRecord = (id, fileName) => {
+  const folderInfo = findRecordFolderById(id);
+  if (!folderInfo) return null;
+
+  const record = folderInfo.record;
+  const folderName = folderInfo.folderName;
+  const baseName = generateBaseName(record.title, record.dateTime, id);
+
+  // Migrate old format if needed
+  let mediaFiles = record.mediaFiles || [];
+  if (!mediaFiles.length && record.imageFile) {
+    mediaFiles = [{
+      fileName: record.imageFile,
+      type: getMediaType(record.imageFile),
+      originalName: record.imageFile
+    }];
+  }
+
+  // Delete the physical file
+  deleteMediaFileFromFolder(folderInfo.folderPath, fileName);
+
+  // Remove from mediaFiles array
+  mediaFiles = mediaFiles.filter(mf => mf.fileName !== fileName);
+
+  const updatedRecord = {
+    ...record,
+    mediaFiles,
+    updatedAt: new Date().toISOString()
+  };
+
+  saveRecordJson(folderName, baseName, updatedRecord);
   return updatedRecord;
 };
 

@@ -1,12 +1,19 @@
 import * as recordService from '../services/recordService.js';
 
-// Helper to construct image URL
-const getRecordImageUrl = (record) => {
-  if (!record || !record.folderName || !record.imageFile) return null;
-  return `/data/${encodeURIComponent(record.folderName)}/${encodeURIComponent(record.imageFile)}`;
+// Helper to construct media URLs for a record
+const getRecordMediaUrls = (record) => {
+  if (!record || !record.folderName) return [];
+  
+  const mediaFiles = record.mediaFiles || [];
+  return mediaFiles.map(mf => ({
+    url: `/data/${encodeURIComponent(record.folderName)}/${encodeURIComponent(mf.fileName)}`,
+    type: mf.type,
+    fileName: mf.fileName,
+    originalName: mf.originalName
+  }));
 };
 
-// Create a new record
+// Create a new record with multiple media files
 export const createRecord = async (req, res) => {
   try {
     const { title, description, dateTime } = req.body;
@@ -24,17 +31,18 @@ export const createRecord = async (req, res) => {
       dateTime
     };
 
-    const newRecord = recordService.createRecord(recordData, req.file || null);
+    // req.files is an array when using upload.array()
+    const newRecord = recordService.createRecord(recordData, req.files || []);
     
-    const recordWithUrl = {
+    const recordWithUrls = {
       ...newRecord,
-      imageUrl: getRecordImageUrl(newRecord)
+      mediaUrls: getRecordMediaUrls(newRecord)
     };
 
     res.status(201).json({ 
       success: true, 
       message: 'Record created successfully', 
-      data: recordWithUrl 
+      data: recordWithUrls 
     });
   } catch (error) {
     console.error('Error creating record:', error);
@@ -53,7 +61,7 @@ export const getAllRecords = async (req, res) => {
     
     const recordsWithUrls = records.map(record => ({
       ...record,
-      imageUrl: getRecordImageUrl(record)
+      mediaUrls: getRecordMediaUrls(record)
     }));
     
     res.status(200).json({ 
@@ -83,14 +91,14 @@ export const getRecordById = async (req, res) => {
       });
     }
     
-    const recordWithUrl = {
+    const recordWithUrls = {
       ...record,
-      imageUrl: getRecordImageUrl(record)
+      mediaUrls: getRecordMediaUrls(record)
     };
     
     res.status(200).json({ 
       success: true, 
-      data: recordWithUrl 
+      data: recordWithUrls 
     });
   } catch (error) {
     console.error('Error fetching record:', error);
@@ -102,7 +110,7 @@ export const getRecordById = async (req, res) => {
   }
 };
 
-// Update a record
+// Update a record (text fields only)
 export const updateRecord = async (req, res) => {
   try {
     const { id } = req.params;
@@ -122,17 +130,17 @@ export const updateRecord = async (req, res) => {
       dateTime: dateTime || existingRecord.dateTime
     };
 
-    const updatedRecord = recordService.updateRecord(id, updateData, req.file || null);
+    const updatedRecord = recordService.updateRecord(id, updateData);
     
-    const recordWithUrl = {
+    const recordWithUrls = {
       ...updatedRecord,
-      imageUrl: getRecordImageUrl(updatedRecord)
+      mediaUrls: getRecordMediaUrls(updatedRecord)
     };
     
     res.status(200).json({ 
       success: true, 
       message: 'Record updated successfully', 
-      data: recordWithUrl 
+      data: recordWithUrls 
     });
   } catch (error) {
     console.error('Error updating record:', error);
@@ -140,6 +148,83 @@ export const updateRecord = async (req, res) => {
       success: false, 
       message: 'Failed to update record', 
       error: error.message 
+    });
+  }
+};
+
+// Add a single media file to an existing record
+export const addMedia = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No media file provided'
+      });
+    }
+
+    const existingRecord = recordService.getRecordById(id);
+    if (!existingRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'Record not found'
+      });
+    }
+
+    const updatedRecord = recordService.addMediaToRecord(id, req.file);
+    
+    const recordWithUrls = {
+      ...updatedRecord,
+      mediaUrls: getRecordMediaUrls(updatedRecord)
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Media added successfully',
+      data: recordWithUrls
+    });
+  } catch (error) {
+    console.error('Error adding media:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add media',
+      error: error.message
+    });
+  }
+};
+
+// Delete a single media file from a record
+export const deleteMedia = async (req, res) => {
+  try {
+    const { id, fileName } = req.params;
+
+    const existingRecord = recordService.getRecordById(id);
+    if (!existingRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'Record not found'
+      });
+    }
+
+    const updatedRecord = recordService.deleteMediaFromRecord(id, decodeURIComponent(fileName));
+    
+    const recordWithUrls = {
+      ...updatedRecord,
+      mediaUrls: getRecordMediaUrls(updatedRecord)
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Media deleted successfully',
+      data: recordWithUrls
+    });
+  } catch (error) {
+    console.error('Error deleting media:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete media',
+      error: error.message
     });
   }
 };
