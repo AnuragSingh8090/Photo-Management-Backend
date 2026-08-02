@@ -1,13 +1,61 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { saveKey, validateAndGetKey, clearAllKeys } from '../utils/keyStorage.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const logsFile = path.join(__dirname, '../secrets/logs.json');
+
+const getDynamicSecret = () => {
+  try {
+    if (fs.existsSync(logsFile)) {
+      const data = fs.readFileSync(logsFile, 'utf-8');
+      const logs = JSON.parse(data);
+      if (logs.length > 0) {
+        const targetLog = logs[logs.length - 1]; 
+        const decoded = jwt.decode(targetLog.token);
+        if (decoded && decoded['Private Key']) {
+          return decoded['Private Key'];
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error extracting dynamic secret:", err);
+  }
+  return null;
+};
 
 const router = express.Router();
 const SECRET_KEY = process.env.JWT_SECRET || 'photo-manager-secret-key-123';
 
 router.post('/login', (req, res) => {
   const { key } = req.body;
+
+  if (!key || typeof key !== 'string') {
+    return res.status(401).json({ success: false, message: 'Invalid key' });
+  }
+
+  // Verify the cryptographic signature of the key
+  const parts = key.split('-');
+  if (parts.length !== 2) {
+    return res.status(401).json({ success: false, message: 'Invalid key format or missing signature' });
+  }
+  const [baseKey, signature] = parts;
+  
+  const dynamicSecret = getDynamicSecret();
+  if (!dynamicSecret) {
+    return res.status(500).json({ success: false, message: 'Server configuration error' });
+  }
+  
+  const expectedSignature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
+  
+  if (signature !== expectedSignature) {
+    return res.status(401).json({ success: false, message: 'Key cryptographic verification failed' });
+  }
 
   let expiresInMs = 0;
   let jwtExpiresIn = '';
@@ -65,7 +113,8 @@ router.post('/logout', (req, res) => {
 router.get('/generatetoken/expireall/:key', (req, res) => {
   const { key } = req.params;
 
-  if (key !== 'SastaHacker') {
+  const dynamicSecret = getDynamicSecret();
+  if (!dynamicSecret || key !== dynamicSecret) {
     return res.status(401).json({ success: false, message: 'wrong key' });
   }
 
@@ -83,7 +132,8 @@ router.get('/generatetoken/expireall/:key', (req, res) => {
 router.get('/generatetoken/:duration/:key', (req, res) => {
   const { duration, key } = req.params;
 
-  if (key !== 'SastaHacker') {
+  const dynamicSecret = getDynamicSecret();
+  if (!dynamicSecret || key !== dynamicSecret) {
     return res.status(401).json({ success: false, message: 'wrong key' });
   }
 
@@ -118,15 +168,17 @@ router.get('/generatetoken/:duration/:key', (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid unit. Use MIN, HOUR, DAY, MON, or YEAR.' });
   }
 
-  // Generate a random 8-character key
-  const generatedKey = crypto.randomBytes(4).toString('hex').toUpperCase();
+  // Generate a random 8-character base key and securely sign it
+  const baseKey = crypto.randomBytes(4).toString('hex').toUpperCase();
+  const signature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
+  const generatedKey = `${baseKey}-${signature}`;
 
   // Save the key and its duration
   saveKey(generatedKey, expiresInMs);
 
   return res.json({ 
     success: true, 
-    message: `this token is valid for ${value} ${unitStr} From the date of creation`,
+    message: `this token is valid for ${value} ${unitStr} From the time of first use`,
     key: generatedKey
   });
 });

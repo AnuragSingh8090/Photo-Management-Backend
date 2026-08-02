@@ -30,7 +30,8 @@ export const saveKey = (key, durationMs) => {
   const keys = {};
   keys[key] = {
     durationMs,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    firstUsedAt: null
   };
   
   const dir = path.dirname(keysFile);
@@ -45,7 +46,13 @@ export const validateAndGetKey = (key) => {
   const keys = getKeys();
   if (keys[key]) {
     const keyData = keys[key];
-    const expiresAt = keyData.createdAt + keyData.durationMs;
+    
+    if (!keyData.firstUsedAt) {
+      keyData.firstUsedAt = Date.now();
+      fs.writeFileSync(keysFile, JSON.stringify(keys, null, 2));
+    }
+    
+    const expiresAt = keyData.firstUsedAt + keyData.durationMs;
     const remainingMs = expiresAt - Date.now();
     
     // If the key has already expired, delete it and return null
@@ -55,7 +62,7 @@ export const validateAndGetKey = (key) => {
       return null;
     }
     
-    // Return the actual remaining duration from creation date
+    // Return the actual remaining duration from first use date
     return remainingMs;
   }
   return null;
