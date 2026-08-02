@@ -25,13 +25,23 @@ export const clearAllKeys = () => {
   fs.writeFileSync(keysFile, JSON.stringify({}, null, 2));
 };
 
-export const saveKey = (key, durationMs) => {
-  // Clear old keys by creating a fresh object
-  const keys = {};
+export const saveKey = (key, durationMs, isTestKey = false) => {
+  const keys = getKeys();
+  
+  if (isTestKey) {
+    // Remove any existing test keys
+    for (const existingKey in keys) {
+      if (keys[existingKey].isTestKey || keys[existingKey].durationMs === 300000) {
+        delete keys[existingKey];
+      }
+    }
+  }
+
   keys[key] = {
     durationMs,
     createdAt: Date.now(),
-    firstUsedAt: null
+    firstUsedAt: null,
+    isTestKey
   };
   
   const dir = path.dirname(keysFile);

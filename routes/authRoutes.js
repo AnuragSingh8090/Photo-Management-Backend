@@ -127,6 +127,32 @@ router.get('/generatetoken/expireall/:key', (req, res) => {
   });
 });
 
+// Test backend route for generating 5-minute test tokens
+router.get('/generatetoken/test/:key', (req, res) => {
+  const { key } = req.params;
+
+  const dynamicSecret = getDynamicSecret();
+  if (!dynamicSecret || key !== dynamicSecret) {
+    return res.status(401).json({ success: false, message: 'wrong key' });
+  }
+
+  const expiresInMs = 5 * 60 * 1000; // 5 minutes
+
+  // Generate a random 8-character base key and securely sign it
+  const baseKey = crypto.randomBytes(4).toString('hex').toUpperCase();
+  const signature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
+  const generatedKey = `${baseKey}-${signature}`;
+
+  // Save the test key and wipe old test keys
+  saveKey(generatedKey, expiresInMs, true);
+
+  return res.json({ 
+    success: true, 
+    message: 'this test token is valid for 5 Minutes From the time of first use',
+    key: generatedKey
+  });
+});
+
 // Secret backend route for generating custom tokens
 // Example: /auth/generatetoken/7D/SastaHacker
 router.get('/generatetoken/:duration/:key', (req, res) => {
