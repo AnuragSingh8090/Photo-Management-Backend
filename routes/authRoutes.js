@@ -1,36 +1,10 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { saveKey, validateAndGetKey, clearAllKeys } from '../utils/keyStorage.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const logsFile = path.join(__dirname, '../secrets/logs.json');
-
-const getDynamicSecret = () => {
-  try {
-    if (fs.existsSync(logsFile)) {
-      const data = fs.readFileSync(logsFile, 'utf-8');
-      const logs = JSON.parse(data);
-      if (logs.length > 0) {
-        const targetLog = logs[logs.length - 1]; 
-        const decoded = jwt.decode(targetLog.token);
-        if (decoded && decoded['Private Key']) {
-          return decoded['Private Key'];
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Error extracting dynamic secret:", err);
-  }
-  return null;
-};
+import { getJwtSecret, getPrivateKey, getAlgorithm } from '../utils/secretsConfig.js';
 
 const router = express.Router();
-const SECRET_KEY = process.env.JWT_SECRET || 'photo-manager-secret-key-123';
 
 router.post('/login', (req, res) => {
   const { key } = req.body;
@@ -46,32 +20,27 @@ router.post('/login', (req, res) => {
   }
   const [baseKey, signature] = parts;
   
-  const dynamicSecret = getDynamicSecret();
-  if (!dynamicSecret) {
-    return res.status(500).json({ success: false, message: 'Server configuration error' });
-  }
+  const privateKey = getPrivateKey();
   
-  const expectedSignature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
+  const expectedSignature = crypto.createHmac('sha256', privateKey).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
   
   if (signature !== expectedSignature) {
     return res.status(401).json({ success: false, message: 'Key cryptographic verification failed' });
   }
 
-  let expiresInMs = 0;
-  let jwtExpiresIn = '';
-
-  // Check if it's a generated custom key
+  // Validate the key exists and get remaining duration
   const customDurationMs = validateAndGetKey(key);
-  if (customDurationMs) {
-    expiresInMs = customDurationMs;
-    // Convert ms to seconds for jsonwebtoken format, or just pass number (ms -> s)
-    jwtExpiresIn = Math.floor(customDurationMs / 1000); 
-  } else {
+  if (!customDurationMs) {
     return res.status(401).json({ success: false, message: 'Invalid key' });
   }
 
+  const expiresInMs = customDurationMs;
+  const jwtExpiresIn = Math.floor(customDurationMs / 1000);
+
   const expiresAt = Date.now() + expiresInMs;
-  const token = jwt.sign({ role: 'admin', expiresAt, keyId: key }, SECRET_KEY, { expiresIn: jwtExpiresIn });
+  const jwtSecret = getJwtSecret();
+  const algorithm = getAlgorithm();
+  const token = jwt.sign({ role: 'admin', expiresAt, keyId: key }, jwtSecret, { algorithm, expiresIn: jwtExpiresIn });
 
   // Set HTTP-only cookie
   res.cookie('authToken', token, {
@@ -91,7 +60,9 @@ router.get('/verify', (req, res) => {
   }
 
   try {
-    const decoded = jwt.verify(token, SECRET_KEY);
+    const jwtSecret = getJwtSecret();
+    const algorithm = getAlgorithm();
+    const decoded = jwt.verify(token, jwtSecret, { algorithms: [algorithm] });
     
     // Check if the key used to generate this token is still valid
     if (!decoded.keyId || !validateAndGetKey(decoded.keyId)) {
@@ -113,8 +84,8 @@ router.post('/logout', (req, res) => {
 router.get('/generatetoken/expireall/:key', (req, res) => {
   const { key } = req.params;
 
-  const dynamicSecret = getDynamicSecret();
-  if (!dynamicSecret || key !== dynamicSecret) {
+  const privateKey = getPrivateKey();
+  if (key !== privateKey) {
     return res.status(401).json({ success: false, message: 'wrong key' });
   }
 
@@ -127,39 +98,13 @@ router.get('/generatetoken/expireall/:key', (req, res) => {
   });
 });
 
-// Test backend route for generating 5-minute test tokens
-router.get('/generatetoken/test/:key', (req, res) => {
-  const { key } = req.params;
-
-  const dynamicSecret = getDynamicSecret();
-  if (!dynamicSecret || key !== dynamicSecret) {
-    return res.status(401).json({ success: false, message: 'wrong key' });
-  }
-
-  const expiresInMs = 5 * 60 * 1000; // 5 minutes
-
-  // Generate a random 8-character base key and securely sign it
-  const baseKey = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const signature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
-  const generatedKey = `${baseKey}-${signature}`;
-
-  // Save the test key and wipe old test keys
-  saveKey(generatedKey, expiresInMs, true);
-
-  return res.json({ 
-    success: true, 
-    message: 'this test token is valid for 5 Minutes From the time of first use',
-    key: generatedKey
-  });
-});
-
-// Secret backend route for generating custom tokens
-// Example: /auth/generatetoken/7D/SastaHacker
+// Generate a new key — automatically invalidates any previous key
+// Example: /auth/generatetoken/7D/SastaHacker  or  /auth/generatetoken/5MIN/SastaHacker
 router.get('/generatetoken/:duration/:key', (req, res) => {
   const { duration, key } = req.params;
 
-  const dynamicSecret = getDynamicSecret();
-  if (!dynamicSecret || key !== dynamicSecret) {
+  const privateKey = getPrivateKey();
+  if (key !== privateKey) {
     return res.status(401).json({ success: false, message: 'wrong key' });
   }
 
@@ -196,10 +141,10 @@ router.get('/generatetoken/:duration/:key', (req, res) => {
 
   // Generate a random 8-character base key and securely sign it
   const baseKey = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const signature = crypto.createHmac('sha256', dynamicSecret).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
+  const signature = crypto.createHmac('sha256', privateKey).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
   const generatedKey = `${baseKey}-${signature}`;
 
-  // Save the key and its duration
+  // Save the key (automatically wipes all previous keys — only one key at a time)
   saveKey(generatedKey, expiresInMs);
 
   return res.json({ 

@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { validateAndGetKey } from '../utils/keyStorage.js';
-
-const SECRET_KEY = process.env.JWT_SECRET || 'photo-manager-secret-key-123';
+import { getJwtSecret, getAlgorithm } from '../utils/secretsConfig.js';
 
 export const verifyToken = (req, res, next) => {
   const token = req.cookies.authToken;
@@ -11,7 +10,9 @@ export const verifyToken = (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, SECRET_KEY);
+    const jwtSecret = getJwtSecret();
+    const algorithm = getAlgorithm();
+    const decoded = jwt.verify(token, jwtSecret, { algorithms: [algorithm] });
     
     // Strict concurrency check: Is the key used to generate this session STILL the active key?
     if (!decoded.keyId || !validateAndGetKey(decoded.keyId)) {
