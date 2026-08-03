@@ -16,51 +16,55 @@ const deriveEncryptionKey = () => {
 
 /**
  * Generate a self-contained encrypted key string.
- * The key itself carries all data (durationMs, createdAt) inside it.
- * Any system with the same privateKey can decrypt and validate this key.
- * 
- * Format: base64url(iv + authTag + ciphertext)
+ * The key carries duration and creation date inside a 14-char uppercase hex payload.
+ * It is secured with an 8-char HMAC signature (total 23 chars, looks like "1234ABCD5678EF-90ABCDEF").
+ * Any system with the same privateKey can validate this key.
  */
 export const generateKeyString = (durationMs) => {
-  const payload = `${durationMs}|${Date.now()}`;
-  const key = deriveEncryptionKey();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ts = Math.floor(Date.now() / 1000);
+  const durMins = Math.floor(durationMs / 60000);
 
-  let encrypted = cipher.update(payload, 'utf8');
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  const authTag = cipher.getAuthTag();
+  // 8 chars for timestamp, 6 chars for duration minutes -> 14 chars payload
+  const tsHex = ts.toString(16).padStart(8, '0').toUpperCase();
+  const durHex = durMins.toString(16).padStart(6, '0').toUpperCase();
+  const payload = tsHex + durHex;
 
-  // Combine: iv(12) + authTag(16) + ciphertext → single base64url string
-  const combined = Buffer.concat([iv, authTag, encrypted]);
-  return combined.toString('base64url');
+  const signature = crypto.createHmac('sha256', getPrivateKey())
+    .update(payload)
+    .digest('hex')
+    .substring(0, 8)
+    .toUpperCase();
+
+  return `${payload}-${signature}`;
 };
 
 /**
- * Decrypt a self-contained key string and extract its data.
+ * Validate and extract data from a short key string.
  * Returns { durationMs, createdAt } or null if invalid/tampered.
  */
 export const decryptKeyString = (keyStr) => {
   try {
-    const combined = Buffer.from(keyStr, 'base64url');
-    if (combined.length < 29) return null; // minimum: iv(12) + authTag(16) + 1 byte
+    const parts = keyStr.split('-');
+    if (parts.length !== 2) return null;
+    const [payload, signature] = parts;
+    
+    if (payload.length !== 14 || signature.length !== 8) return null;
 
-    const iv = combined.subarray(0, 12);
-    const authTag = combined.subarray(12, 28);
-    const ciphertext = combined.subarray(28);
+    const expectedSig = crypto.createHmac('sha256', getPrivateKey())
+      .update(payload)
+      .digest('hex')
+      .substring(0, 8)
+      .toUpperCase();
 
-    const key = deriveEncryptionKey();
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
+    if (signature !== expectedSig) return null;
 
-    let decrypted = decipher.update(ciphertext, null, 'utf8');
-    decrypted += decipher.final('utf8');
+    const ts = parseInt(payload.substring(0, 8), 16);
+    const durMins = parseInt(payload.substring(8, 14), 16);
 
-    const [durationStr, createdStr] = decrypted.split('|');
-    const durationMs = parseInt(durationStr, 10);
-    const createdAt = parseInt(createdStr, 10);
+    if (isNaN(ts) || isNaN(durMins)) return null;
 
-    if (isNaN(durationMs) || isNaN(createdAt)) return null;
+    const createdAt = ts * 1000;
+    const durationMs = durMins * 60000;
 
     return { durationMs, createdAt };
   } catch {
