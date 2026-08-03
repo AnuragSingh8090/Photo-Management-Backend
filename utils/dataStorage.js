@@ -7,7 +7,10 @@ import { getMediaDataPath } from './pathHelper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Desktop media directory
 const dataDir = getMediaDataPath();
+// Backend JSON metadata directory
+const backendJsonDir = path.join(__dirname, '..', 'data json');
 
 // Media file extensions
 const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
@@ -24,10 +27,13 @@ export const getMediaType = (fileName) => {
   return 'unknown';
 };
 
-// Ensure main data directory exists
+// Ensure main data directories exist
 export const ensureDataDirectory = () => {
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (!fs.existsSync(backendJsonDir)) {
+    fs.mkdirSync(backendJsonDir, { recursive: true });
   }
 };
 
@@ -76,25 +82,26 @@ export const generateBaseName = (title, dateTimeStr, id) => {
 // Find folder info by record ID
 export const findRecordFolderById = (id) => {
   ensureDataDirectory();
-  const entries = fs.readdirSync(dataDir, { withFileTypes: true });
+  const entries = fs.readdirSync(backendJsonDir, { withFileTypes: true });
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const folderName = entry.name;
-      const folderPath = path.join(dataDir, folderName);
+      const jsonDirPath = path.join(backendJsonDir, folderName);
       
       // Look for any .json file in this folder
-      const files = fs.readdirSync(folderPath);
+      const files = fs.readdirSync(jsonDirPath);
       const jsonFile = files.find(f => f.endsWith('.json'));
 
       if (jsonFile) {
         try {
-          const jsonContent = fs.readFileSync(path.join(folderPath, jsonFile), 'utf8');
+          const jsonContent = fs.readFileSync(path.join(jsonDirPath, jsonFile), 'utf8');
           const record = JSON.parse(jsonContent);
           if (record && record.id === id) {
             return {
               folderName,
-              folderPath,
+              folderPath: path.join(dataDir, folderName), // Media path
+              jsonDirPath,
               jsonFile,
               record
             };
@@ -108,42 +115,86 @@ export const findRecordFolderById = (id) => {
   return null;
 };
 
-// Create a record folder using baseName
+// Create a record folder using baseName (both media and JSON locations)
 export const createRecordFolder = (baseName) => {
   ensureDataDirectory();
-  const folderPath = path.join(dataDir, baseName);
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
+  
+  const mediaFolderPath = path.join(dataDir, baseName);
+  if (!fs.existsSync(mediaFolderPath)) {
+    fs.mkdirSync(mediaFolderPath, { recursive: true });
   }
-  return folderPath;
+
+  const jsonFolderPath = path.join(backendJsonDir, baseName);
+  if (!fs.existsSync(jsonFolderPath)) {
+    fs.mkdirSync(jsonFolderPath, { recursive: true });
+  }
+
+  return mediaFolderPath;
 };
 
-// Save record JSON inside its folder
+// Save record JSON inside its backend folder
 export const saveRecordJson = (folderName, baseName, recordData) => {
-  const folderPath = path.join(dataDir, folderName);
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
+  ensureDataDirectory();
+  const jsonDirPath = path.join(backendJsonDir, folderName);
+  
+  if (!fs.existsSync(jsonDirPath)) {
+    fs.mkdirSync(jsonDirPath, { recursive: true });
   }
-  const jsonPath = path.join(folderPath, `${baseName}.json`);
+  
+  const jsonPath = path.join(jsonDirPath, `${baseName}.json`);
   fs.writeFileSync(jsonPath, JSON.stringify(recordData, null, 2), 'utf8');
 };
 
-// Read all records from all subdirectories in /data/
+// Read all records from all subdirectories in /data json/ (and migrate old desktop data)
 export const readAllRecords = () => {
   ensureDataDirectory();
+
+  // --- MIGRATION LOGIC ---
+  // Migrate any old JSON files from the desktop data directory to the new backend json directory
+  const desktopEntries = fs.readdirSync(dataDir, { withFileTypes: true });
+  for (const entry of desktopEntries) {
+    if (entry.isDirectory()) {
+      const folderName = entry.name;
+      const mediaFolderPath = path.join(dataDir, folderName);
+      const mediaFiles = fs.readdirSync(mediaFolderPath);
+      
+      const oldJsonFile = mediaFiles.find(f => f.endsWith('.json'));
+      if (oldJsonFile) {
+        const oldJsonPath = path.join(mediaFolderPath, oldJsonFile);
+        const jsonDirPath = path.join(backendJsonDir, folderName);
+        
+        // Ensure new backend folder exists
+        if (!fs.existsSync(jsonDirPath)) {
+          fs.mkdirSync(jsonDirPath, { recursive: true });
+        }
+        
+        const newJsonPath = path.join(jsonDirPath, oldJsonFile);
+        
+        // Move the file
+        try {
+          fs.renameSync(oldJsonPath, newJsonPath);
+          console.log(`Migrated ${oldJsonFile} to Backend/data json`);
+        } catch (err) {
+          console.error(`Failed to migrate ${oldJsonFile}:`, err);
+        }
+      }
+    }
+  }
+  // --- END MIGRATION ---
+
   const records = [];
-  const entries = fs.readdirSync(dataDir, { withFileTypes: true });
+  const entries = fs.readdirSync(backendJsonDir, { withFileTypes: true });
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const folderName = entry.name;
-      const folderPath = path.join(dataDir, folderName);
-      const files = fs.readdirSync(folderPath);
+      const jsonDirPath = path.join(backendJsonDir, folderName);
+      const files = fs.readdirSync(jsonDirPath);
       const jsonFile = files.find(f => f.endsWith('.json'));
 
       if (jsonFile) {
         try {
-          const content = fs.readFileSync(path.join(folderPath, jsonFile), 'utf8');
+          const content = fs.readFileSync(path.join(jsonDirPath, jsonFile), 'utf8');
           const record = JSON.parse(content);
           if (record) {
             record.folderName = folderName;
@@ -192,17 +243,24 @@ export const readRecordJson = (id) => {
   return record;
 };
 
-// Delete record folder completely
+// Delete record folder completely from both locations
 export const deleteRecordFolder = (id) => {
   const result = findRecordFolderById(id);
-  if (result && fs.existsSync(result.folderPath)) {
-    fs.rmSync(result.folderPath, { recursive: true, force: true });
+  if (result) {
+    // Delete media folder
+    if (fs.existsSync(result.folderPath)) {
+      fs.rmSync(result.folderPath, { recursive: true, force: true });
+    }
+    // Delete json folder
+    if (fs.existsSync(result.jsonDirPath)) {
+      fs.rmSync(result.jsonDirPath, { recursive: true, force: true });
+    }
     return true;
   }
   return false;
 };
 
-// Save a media file (image or video) to a record folder
+// Save a media file (image or video) to a record folder (media path)
 export const saveMediaToRecordFolder = (folderName, baseName, buffer, originalName, index) => {
   const folderPath = path.join(dataDir, folderName);
   if (!fs.existsSync(folderPath)) {
@@ -218,7 +276,7 @@ export const saveMediaToRecordFolder = (folderName, baseName, buffer, originalNa
   return mediaFileName;
 };
 
-// Delete all media files in a record folder
+// Delete all media files in a record folder (media path)
 export const deleteAllMediaInFolder = (folderPath) => {
   if (!fs.existsSync(folderPath)) return;
   const files = fs.readdirSync(folderPath);
@@ -234,7 +292,7 @@ export const deleteAllMediaInFolder = (folderPath) => {
   });
 };
 
-// Delete a single media file from a record folder
+// Delete a single media file from a record folder (media path)
 export const deleteMediaFileFromFolder = (folderPath, fileName) => {
   const filePath = path.join(folderPath, fileName);
   if (fs.existsSync(filePath)) {
