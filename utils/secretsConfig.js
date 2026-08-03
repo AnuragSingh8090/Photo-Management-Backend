@@ -1,41 +1,66 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const configFile = path.join(__dirname, '../secrets/config.json');
+const logsFile = path.join(__dirname, '../secrets/logs.json');
 
 let _config = null;
 
 /**
- * Loads the shared secrets config from secrets/config.json.
- * This config contains the JWT secret, private key, and algorithm.
- * Any system that shares the same config.json will produce and verify
- * identical tokens — making auth portable across machines.
+ * Loads the shared secrets config from the last entry in logs.json.
+ * The token property of this entry contains a JWT with our configuration.
  */
 const loadConfig = () => {
   if (_config) return _config;
 
-  if (!fs.existsSync(configFile)) {
-    console.error('FATAL: secrets/config.json not found. Create it with jwtSecret, privateKey, and algorithm.');
+  if (!fs.existsSync(logsFile)) {
+    console.error('FATAL: secrets/logs.json not found.');
     process.exit(1);
   }
 
   try {
-    const data = fs.readFileSync(configFile, 'utf-8');
-    _config = JSON.parse(data);
+    const data = fs.readFileSync(logsFile, 'utf-8');
+    const logs = JSON.parse(data);
 
-    // Validate required fields
-    if (!_config.jwtSecret || !_config.privateKey || !_config.algorithm) {
-      console.error('FATAL: secrets/config.json must contain jwtSecret, privateKey, and algorithm.');
+    if (!Array.isArray(logs) || logs.length === 0) {
+      console.error('FATAL: secrets/logs.json is empty or invalid.');
       process.exit(1);
     }
 
-    console.log('✅ Loaded shared secrets config (algorithm: ' + _config.algorithm + ')');
+    const targetLog = logs[logs.length - 1];
+    
+    if (!targetLog.token) {
+      console.error('FATAL: The last log entry does not contain a token.');
+      process.exit(1);
+    }
+
+    // Decode the token (no verification needed here per user request, it's just a config container)
+    const decoded = jwt.decode(targetLog.token);
+    if (!decoded) {
+      console.error('FATAL: Could not decode JWT from logs.json.');
+      process.exit(1);
+    }
+
+    _config = {
+      jwtSecret: decoded.jwtSecret,
+      privateKey: decoded.privateKey,
+      algorithm: decoded.algorithm,
+      tokenVersion: decoded.tokenVersion
+    };
+
+    // Validate required fields
+    if (!_config.jwtSecret || !_config.privateKey || !_config.algorithm) {
+      console.error('FATAL: The config token must contain jwtSecret, privateKey, and algorithm.');
+      process.exit(1);
+    }
+
+    console.log('✅ Loaded secrets config from logs.json (algorithm: ' + _config.algorithm + ')');
     return _config;
   } catch (err) {
-    console.error('FATAL: Failed to parse secrets/config.json:', err.message);
+    console.error('FATAL: Failed to parse secrets/logs.json or decode token:', err.message);
     process.exit(1);
   }
 };
@@ -50,7 +75,6 @@ export const getJwtSecret = () => {
 
 /**
  * Returns the private key used for HMAC key generation/signing.
- * This is the "dynamic secret" that was previously extracted from logs.json.
  */
 export const getPrivateKey = () => {
   return loadConfig().privateKey;

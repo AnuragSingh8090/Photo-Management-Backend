@@ -1,7 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import { saveKey, validateAndGetKey, clearAllKeys } from '../utils/keyStorage.js';
+import { generateKeyString, validateAndGetKey, clearAllKeys, registerKey, decryptKeyString } from '../utils/keyStorage.js';
 import { getJwtSecret, getPrivateKey, getAlgorithm } from '../utils/secretsConfig.js';
 
 const router = express.Router();
@@ -13,31 +12,23 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ success: false, message: 'Invalid key' });
   }
 
-  // Verify the cryptographic signature of the key
-  const parts = key.split('-');
-  if (parts.length !== 2) {
-    return res.status(401).json({ success: false, message: 'Invalid key format or missing signature' });
-  }
-  const [baseKey, signature] = parts;
-  
-  const privateKey = getPrivateKey();
-  
-  const expectedSignature = crypto.createHmac('sha256', privateKey).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
-  
-  if (signature !== expectedSignature) {
-    return res.status(401).json({ success: false, message: 'Key cryptographic verification failed' });
-  }
-
-  // Validate the key exists and get remaining duration
-  const customDurationMs = validateAndGetKey(key);
-  if (!customDurationMs) {
+  // Decrypt the self-contained key — this works on ANY system with the same privateKey
+  // If decryption fails, the key is invalid or tampered
+  const keyData = decryptKeyString(key);
+  if (!keyData) {
     return res.status(401).json({ success: false, message: 'Invalid key' });
   }
 
-  const expiresInMs = customDurationMs;
-  const jwtExpiresIn = Math.floor(customDurationMs / 1000);
+  // Validate the key and get remaining duration
+  const remainingMs = validateAndGetKey(key);
+  if (!remainingMs) {
+    return res.status(401).json({ success: false, message: 'Key expired or invalid' });
+  }
 
+  const expiresInMs = remainingMs;
+  const jwtExpiresIn = Math.floor(remainingMs / 1000);
   const expiresAt = Date.now() + expiresInMs;
+
   const jwtSecret = getJwtSecret();
   const algorithm = getAlgorithm();
   const token = jwt.sign({ role: 'admin', expiresAt, keyId: key }, jwtSecret, { algorithm, expiresIn: jwtExpiresIn });
@@ -64,7 +55,7 @@ router.get('/verify', (req, res) => {
     const algorithm = getAlgorithm();
     const decoded = jwt.verify(token, jwtSecret, { algorithms: [algorithm] });
     
-    // Check if the key used to generate this token is still valid
+    // Validate the original key is still active
     if (!decoded.keyId || !validateAndGetKey(decoded.keyId)) {
       throw new Error('Token key is no longer valid');
     }
@@ -89,7 +80,6 @@ router.get('/generatetoken/expireall/:key', (req, res) => {
     return res.status(401).json({ success: false, message: 'wrong key' });
   }
 
-  // Erase all keys in the storage
   clearAllKeys();
 
   return res.json({ 
@@ -98,7 +88,7 @@ router.get('/generatetoken/expireall/:key', (req, res) => {
   });
 });
 
-// Generate a new key — automatically invalidates any previous key
+// Generate a new key — automatically invalidates any previous key on this system
 // Example: /auth/generatetoken/7D/SastaHacker  or  /auth/generatetoken/5MIN/SastaHacker
 router.get('/generatetoken/:duration/:key', (req, res) => {
   const { duration, key } = req.params;
@@ -139,13 +129,11 @@ router.get('/generatetoken/:duration/:key', (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid unit. Use MIN, HOUR, DAY, MON, or YEAR.' });
   }
 
-  // Generate a random 8-character base key and securely sign it
-  const baseKey = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const signature = crypto.createHmac('sha256', privateKey).update(baseKey).digest('hex').substring(0, 8).toUpperCase();
-  const generatedKey = `${baseKey}-${signature}`;
+  // Generate a self-contained encrypted key (carries durationMs + createdAt inside it)
+  const generatedKey = generateKeyString(expiresInMs);
 
-  // Save the key (automatically wipes all previous keys — only one key at a time)
-  saveKey(generatedKey, expiresInMs);
+  // Register on this system (wipes old keys — only one at a time)
+  registerKey(generatedKey);
 
   return res.json({ 
     success: true, 

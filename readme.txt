@@ -6,19 +6,21 @@ http://localhost:5000/auth/generatetoken/expireall/SastaHacker
 use this route to expire all keys immediately
 
 
+HOW KEYS WORK:
+The generated key is a self-contained encrypted string (e.g. "AeK3x_Bm2q5R...")
+It carries the duration and creation time INSIDE itself, encrypted with privateKey.
+Any system with the same logs.json configuration can decrypt and validate the key.
+No need to copy keys.json between systems.
+
 SECRETS CONFIG:
-All secrets are in: secrets/config.json
+All secrets are centrally stored in a JWT token at the last entry of: secrets/logs.json
+Inside the JWT, the application reads:
   - jwtSecret   : The secret used to sign/verify JWT tokens
-  - privateKey  : The secret used for HMAC key signing + AES encryption of key data
+  - privateKey  : Used for AES encryption of keys + HMAC operations
   - algorithm   : The JWT signing algorithm (e.g. HS256)
 
-KEY STORAGE:
-keys.json stores ONLY ONE key at a time as an encrypted blob.
-  - Generating a new key automatically deletes the old one
-  - The key data (duration, timestamps) is AES-256-GCM encrypted
-  - If someone manually edits the encrypted string, the key becomes invalid
-  - No separate test keys — just one key at a time
-
-TO MAKE TOKENS WORK ACROSS SYSTEMS:
-  1. Copy secrets/config.json to the other system
-  2. Both systems must have the SAME config.json for tokens to work
+CROSS-SYSTEM USAGE:
+  1. Both systems must have the SAME secrets/logs.json file
+  2. Generate a key on System A → give the key string to someone
+  3. They can login on System B using that same key string
+  4. keys.json is local per-system (tracks firstUsedAt only), NOT needed to sync
